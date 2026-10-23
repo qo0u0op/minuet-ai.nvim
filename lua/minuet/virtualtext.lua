@@ -371,6 +371,76 @@ function action.accept(n_lines)
     end)
 end
 
+local function accept_word_extract_portion(suggestion)
+    local text_to_accept
+
+    if suggestion:match '^%s*\n' then
+        text_to_accept = suggestion:match '^(%s*\n)'
+    else
+        text_to_accept = suggestion:match '^([%w]+[%p]?%s*)' or suggestion:match '^(%S+%s*)'
+        if not text_to_accept or #text_to_accept == 0 then
+            text_to_accept = suggestion
+        end
+    end
+
+    return text_to_accept, suggestion:sub(#text_to_accept + 1)
+end
+
+local function accept_word_insert_text(text)
+    local cursor = api.nvim_win_get_cursor(0)
+    local line, col = cursor[1] - 1, cursor[2]
+
+    local insertion_lines = vim.split(text, '\n', { plain = true })
+    api.nvim_buf_set_text(0, line, col, line, col, insertion_lines)
+
+    local new_line, new_col = line, col
+    if text:find '\n' then
+        new_line = line + #insertion_lines - 1
+        new_col = #insertion_lines[#insertion_lines]
+    else
+        new_col = col + #text
+    end
+
+    return new_line, new_col
+end
+
+local function accept_word_update_suggestion(ctx, remaining_text)
+    vim.b.minuet_accepting_word = true
+    ctx.suggestions[ctx.choice] = remaining_text
+
+    vim.defer_fn(function()
+        vim.b.minuet_accepting_word = false
+    end, 100)
+end
+
+function action.accept_word()
+    if vim.fn.pumvisible() == 1 then
+        return
+    end
+
+    local ctx = get_ctx()
+    local suggestion = get_current_suggestion(ctx)
+
+    if not suggestion or vim.fn.empty(suggestion) == 1 then
+        return
+    end
+
+    local text_to_accept, remaining_text = accept_word_extract_portion(suggestion)
+    local new_line, new_col = accept_word_insert_text(text_to_accept)
+
+    if remaining_text == '' then
+        reset_ctx(ctx)
+        clear_preview()
+        return
+    end
+
+    accept_word_update_suggestion(ctx, remaining_text)
+    api.nvim_win_set_cursor(0, { new_line + 1, new_col })
+
+    clear_preview()
+    update_preview(ctx)
+end
+
 function action.accept_n_lines()
     local cursor_pos = vim.api.nvim_win_get_cursor(0)
     local n = vim.fn.input 'accept n lines: '
@@ -450,6 +520,10 @@ function autocmd.on_buf_enter()
 end
 
 function autocmd.on_cursor_moved_i()
+    if vim.b.minuet_accepting_word then
+        return
+    end
+
     local ctx = get_ctx()
 
     if update_suggestion_on_typing(ctx) then
@@ -527,6 +601,13 @@ local function set_keymaps(keymap)
     if keymap.accept then
         vim.keymap.set('i', keymap.accept, action.accept, {
             desc = '[minuet.virtualtext] accept suggestion',
+            silent = true,
+        })
+    end
+
+    if keymap.accept_word then
+        vim.keymap.set('i', keymap.accept_word, action.accept_word, {
+            desc = '[minuet.virtualtext] accept suggestion (word)',
             silent = true,
         })
     end
